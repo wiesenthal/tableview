@@ -78,6 +78,27 @@ pub struct Readiness {
     pub gh_signed_in: bool,
     pub claude_found: bool,
     pub problems: Vec<String>,
+    /// `owner/name` of origin when the signed-in GitHub user can't push to it:
+    /// pull requests can't be opened there, so the panel offers a fork instead.
+    pub fork_from: Option<String>,
+}
+
+/// `owner/name` from a GitHub remote URL (https, ssh or scp-style).
+pub fn github_slug(url: &str) -> Option<String> {
+    let rest = url.trim().split("github.com").nth(1)?;
+    let rest = rest.trim_start_matches([':', '/']).trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let mut parts = rest.split('/');
+    let (owner, name) = (parts.next()?, parts.next()?);
+    if owner.is_empty() || name.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(format!("{owner}/{name}"))
+}
+
+/// Whether a GitHub `viewerPermission` lets the user push branches.
+fn can_push(permission: &str) -> bool {
+    matches!(permission, "ADMIN" | "MAINTAIN" | "WRITE")
 }
 
 /// The source checkout: the configured folder, else the one this binary was built from.
@@ -250,6 +271,16 @@ impl Feedback {
         if !claude_found {
             problems.push("Claude Code isn't installed or signed in. Use the Sign in button in the Claude panel.".into());
         }
+        // Without push access the branch push fails after Claude has done the work,
+        // so ask GitHub up front. If GitHub can't be reached, don't block on it.
+        let mut fork_from = None;
+        if let (true, Some(slug)) = (gh_signed_in, github_slug(&remote)) {
+            if let Ok(perm) = run("gh", &dir, &["repo", "view", &slug, "--json", "viewerPermission", "--jq", ".viewerPermission"]).await {
+                if !can_push(perm.trim()) {
+                    fork_from = Some(slug);
+                }
+            }
+        }
         Readiness {
             source_dir: dir.display().to_string(),
             is_git,
@@ -257,7 +288,30 @@ impl Feedback {
             gh_signed_in,
             claude_found,
             problems,
+            fork_from,
         }
+    }
+
+    /// Forks origin to the signed-in user's GitHub account and makes the fork
+    /// `origin` (the original becomes `upstream`), so feedback PRs open there.
+    pub async fn fork(&self, state: &AppState) -> anyhow::Result<String> {
+        let dir = source_dir(state);
+        let remote = run("git", &dir, &["remote", "get-url", "origin"]).await?;
+        let slug = github_slug(&remote)
+            .ok_or_else(|| anyhow::anyhow!("origin isn't a GitHub repository: {remote}"))?;
+        if run("git", &dir, &["remote", "get-url", "upstream"]).await.is_ok() {
+            anyhow::bail!("This checkout already has a remote named upstream. Point origin at your fork with `git remote set-url origin …`.");
+        }
+        // No repository argument: gh only rewires remotes when forking the current checkout.
+        run("gh", &dir, &["repo", "fork", "--remote", "--remote-name", "origin", "--default-branch-only"]).await?;
+        let fork = run("git", &dir, &["remote", "get-url", "origin"]).await?;
+        let fork = github_slug(&fork).unwrap_or(fork);
+        if fork == slug {
+            anyhow::bail!("GitHub made the fork, but origin still points at {slug}. Set origin to your fork with `git remote set-url origin …`.");
+        }
+        let _ = run("gh", &dir, &["repo", "set-default", &fork]).await;
+        run("git", &dir, &["fetch", "--quiet", "origin"]).await?;
+        Ok(fork)
     }
 
     /// Starts Claude on a change in a fresh worktree; returns the new item.
@@ -277,6 +331,9 @@ impl Feedback {
         let ready = self.readiness(&state).await;
         if let Some(p) = ready.problems.first() {
             anyhow::bail!("{p}");
+        }
+        if let Some(slug) = &ready.fork_from {
+            anyhow::bail!("You can't push to {slug}. Fork it first, then TableView opens pull requests on your fork.");
         }
         let repo = source_dir(&state);
         let id = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
@@ -496,12 +553,19 @@ impl Feedback {
             text.replace('\n', "\n> "),
             summary.clone().unwrap_or_else(|| "See the commits.".into()),
         );
+        // Open the PR on origin itself. After a fork, gh would otherwise pick the
+        // `upstream` remote and send the PR to a repo this user can't merge in.
+        let origin = run("git", &wt, &["remote", "get-url", "origin"]).await?;
+        let target = github_slug(&origin)
+            .ok_or_else(|| anyhow::anyhow!("origin isn't a GitHub repository: {origin}"))?;
         let url = run(
             "gh",
             &wt,
             &[
                 "pr",
                 "create",
+                "--repo",
+                &target,
                 "--base",
                 "main",
                 "--head",
@@ -952,6 +1016,29 @@ pub async fn install_build(state: &AppState) -> anyhow::Result<()> {
         .await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::{can_push, github_slug};
+
+    #[test]
+    fn parses_github_remotes() {
+        let want = Some("zwiesenthal/tableview".to_string());
+        assert_eq!(github_slug("https://github.com/zwiesenthal/tableview.git"), want);
+        assert_eq!(github_slug("https://github.com/zwiesenthal/tableview"), want);
+        assert_eq!(github_slug("https://@github.com/zwiesenthal/tableview.git"), want);
+        assert_eq!(github_slug("git@github.com:zwiesenthal/tableview.git"), want);
+        assert_eq!(github_slug("ssh://git@github.com/zwiesenthal/tableview.git\n"), want);
+        assert_eq!(github_slug("https://gitlab.com/a/b.git"), None);
+        assert_eq!(github_slug("https://github.com/zwiesenthal"), None);
+    }
+
+    #[test]
+    fn push_permissions() {
+        assert!(can_push("ADMIN") && can_push("MAINTAIN") && can_push("WRITE"));
+        assert!(!can_push("READ") && !can_push("TRIAGE") && !can_push(""));
+    }
 }
 
 #[cfg(test)]

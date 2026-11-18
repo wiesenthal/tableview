@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CheckCircle2, Image as ImageIcon, ChevronRight, GitPullRequest, Loader2, RefreshCw, RotateCw, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, GitFork, Image as ImageIcon, ChevronRight, GitPullRequest, Loader2, RefreshCw, RotateCw, Trash2, XCircle } from "lucide-react";
 import { errorText } from "../api";
 import { useStore } from "../store";
 import "../feedback.css";
@@ -26,6 +26,8 @@ interface Item {
 interface Readiness {
   source_dir: string;
   problems: string[];
+  /** owner/name of origin when you can't push to it; the panel offers a fork. */
+  fork_from: string | null;
 }
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
@@ -83,6 +85,7 @@ export function FeedbackDialog() {
   const [progress, setProgress] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [forking, setForking] = useState(false);
   const close = useCallback(() => set({ showFeedback: false }), [set]);
   const attachError = useCallback((m: string) => notify(m, true), [notify]);
   const attach = useAttachments(attachError);
@@ -139,8 +142,22 @@ export function FeedbackDialog() {
     }
   };
 
+  const fork = async () => {
+    setForking(true);
+    try {
+      const name = await invoke<string>("feedback_fork");
+      notify(`Forked to ${name}. Changes now open pull requests there.`);
+      setReady(await invoke<Readiness>("feedback_readiness"));
+    } catch (e) {
+      notify(errorText(e), true);
+    } finally {
+      setForking(false);
+    }
+  };
+
   const hasReady = items.some((i) => i.status === "ready");
   const blocked = ready?.problems.length ? ready.problems : null;
+  const needsFork = !blocked && ready?.fork_from ? ready.fork_from : null;
 
   return (
     <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && close()}>
@@ -152,16 +169,27 @@ export function FeedbackDialog() {
           (Turn off automatic merging in Settings to review every change first.)
         </p>
         {blocked && <div className="error-box" style={{ margin: "0 16px 10px" }}>{blocked.join("\n")}</div>}
+        {needsFork && (
+          <div className="fb-fork">
+            <span>
+              You can't push to <b>{needsFork}</b>, so TableView can't open pull requests there. Fork it to your GitHub account:
+              your changes then open, merge and install from your fork. To suggest one back, open a pull request from your fork.
+            </span>
+            <button className="btn primary" disabled={forking} onClick={fork}>
+              <GitFork size={11} style={{ marginRight: 4, verticalAlign: -1 }} />{forking ? "Forking…" : "Fork on GitHub"}
+            </button>
+          </div>
+        )}
         <div className={`fb-compose${attach.dragging ? " dropping" : ""}`} {...attach.zoneProps}>
           <div className="fb-compose-box">
-          <textarea autoCapitalize="off" autoCorrect="off" spellCheck rows={3} value={text} disabled={!!blocked}
+          <textarea autoCapitalize="off" autoCorrect="off" spellCheck rows={3} value={text} disabled={!!blocked || !!needsFork}
             placeholder="e.g. Show row counts next to each table in the sidebar"
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }} />
           <AttachmentStrip images={attach.images} onRemove={attach.remove} />
           </div>
-          {!blocked && attach.picker}
-          <button className="btn primary" disabled={!text.trim() || busy || !!blocked} onClick={submit}>{busy ? "Starting…" : "Send ⌘↵"}</button>
+          {!blocked && !needsFork && attach.picker}
+          <button className="btn primary" disabled={!text.trim() || busy || !!blocked || !!needsFork} onClick={submit}>{busy ? "Starting…" : "Send ⌘↵"}</button>
         </div>
         {(hasReady || progress || updateError) && (
           <div className={`fb-update ${updateError ? "bad" : hasReady ? "done" : "busy"}`}>

@@ -389,6 +389,11 @@ async fn feedback_readiness(state: St<'_>, fb: Fb<'_>) -> Res<updates::Readiness
 }
 
 #[tauri::command]
+async fn feedback_fork(state: St<'_>, fb: Fb<'_>) -> Res<String> {
+    fb.fork(&state).await.map_err(e)
+}
+
+#[tauri::command]
 async fn feedback_submit(
     state: St<'_>,
     fb: Fb<'_>,
@@ -521,6 +526,7 @@ pub fn run() {
             save_prefs,
             feedback_list,
             feedback_readiness,
+            feedback_fork,
             feedback_submit,
             feedback_retry,
             feedback_check,

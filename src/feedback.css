@@ -34,3 +34,5 @@
 .fb-badge::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: #34c759; }
 .fb-actions .btn { white-space: nowrap; flex: none; }
 .fb-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-fork { display: flex; align-items: center; gap: 12px; margin: 0 16px 10px; padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.45; background: var(--bg-hover); }
+.fb-fork .btn { flex: none; white-space: nowrap; }

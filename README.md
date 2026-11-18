@@ -91,6 +91,8 @@ Press **⇧⌘F** and describe a change ("show row counts next to each table"). 
 
 This needs a git checkout of TableView with a GitHub remote, the GitHub CLI signed in (`gh auth login`), and Claude Code. TableView uses the folder it was built from unless you set another in Settings.
 
+The pull requests go to the checkout's `origin`, so you need push access there. If you cloned this repo, the Feedback window offers **Fork on GitHub**: it forks TableView to your account and makes the fork `origin` (this repo becomes `upstream`), so your changes open, merge and install from your fork. To suggest a change back, open a pull request from your fork here.
+
 ## Make it yours
 
 Settings (**⌘,**) is driven by a small registry in [`src/prefs.ts`](src/prefs.ts): each setting is declared once, the window draws its controls from that list, and values are saved without backend changes. Built in:
