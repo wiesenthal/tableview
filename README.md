@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/demo.mp4"><img src="docs/images/demo-poster.jpg" width="720" alt="25-second demo video: a million rows in 563 ms, benchmarks against TablePlus, Claude making a chart, and features Claude built from feedback"></a><br>
-  <sub>▶ <a href="docs/demo.mp4">Watch the 25-second demo</a></sub>
+  <img src="docs/images/demo.gif" width="800" alt="25-second demo: a million rows in 563 ms, benchmarks against TablePlus, Claude making a chart, and features Claude built from feedback"><br>
+  <sub><a href="https://github.com/zwiesenthal/tableview/raw/main/docs/demo.mp4">Download the 1080p video with sound</a></sub>
 </p>
 
 <p align="center">
