@@ -5,78 +5,11 @@ import DataEditor, {
 import "@glideapps/glide-data-grid/dist/index.css";
 import "../grid.css";
 import { DataType, Table } from "apache-arrow";
+import { cellPreview, cellText } from "../cells";
 import { columnFormats, displayText } from "../prefs";
 import { useStore } from "../store";
 
-const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-
-function formatMicros(us: bigint): string {
-  const ms = Number(us / 1000n);
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return us.toString();
-  const frac = Number(((us % 1_000_000n) + 1_000_000n) % 1_000_000n);
-  const base = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-  return frac ? `${base}.${String(frac).padStart(6, "0").replace(/0+$/, "")}` : base;
-}
-
-function formatDays(days: number): string {
-  const d = new Date(days * 86_400_000);
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-}
-
-/** Text for one cell, or null for SQL NULL. Timestamps keep microseconds. */
-export function cellText(table: Table, col: number, row: number): string | null {
-  const vec = table.getChildAt(col);
-  if (!vec || !vec.isValid(row)) return null;
-  const type = vec.type;
-  if (DataType.isTimestamp(type) || DataType.isDate(type)) {
-    let r = row;
-    for (const data of vec.data) {
-      if (r < data.length) {
-        const raw = (data.values as BigInt64Array | Int32Array)[data.offset + r];
-        if (DataType.isDate(type)) return formatDays(Number(raw));
-        return formatMicros(BigInt(raw));
-      }
-      r -= data.length;
-    }
-  }
-  const v = vec.get(row);
-  if (v === null || v === undefined) return null;
-  if (typeof v === "bigint") return v.toString();
-  return String(v);
-}
-
-/** The raw UTF-8 bytes of a text cell, without decoding it; null for other types or NULL. */
-function utf8Bytes(table: Table, col: number, row: number): Uint8Array | null {
-  const vec = table.getChildAt(col);
-  if (!vec || !DataType.isUtf8(vec.type) || !vec.isValid(row)) return null;
-  let r = row;
-  for (const data of vec.data) {
-    if (r < data.length) {
-      const offsets = data.valueOffsets as Int32Array;
-      return (data.values as Uint8Array).subarray(offsets[data.offset + r], offsets[data.offset + r + 1]);
-    }
-    r -= data.length;
-  }
-  return null;
-}
-
-/** Cells bigger than this are drawn from a decoded prefix, not the whole value. */
-const LARGE_CELL_BYTES = 16 * 1024;
-const PREVIEW_BYTES = 2048;
-const decoder = new TextDecoder();
-
-/**
- * Text to draw for a cell: the whole value, or for a large text cell (a 1 MB
- * document, a long JSON) only its start, so scrolling never decodes megabytes per frame.
- */
-export function cellPreview(table: Table, col: number, row: number): { text: string | null; large: boolean } {
-  const bytes = utf8Bytes(table, col, row);
-  if (!bytes || bytes.length <= LARGE_CELL_BYTES) return { text: cellText(table, col, row), large: false };
-  let end = PREVIEW_BYTES;
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--; // don't split a UTF-8 sequence
-  return { text: decoder.decode(bytes.subarray(0, end)), large: true };
-}
+export { cellPreview, cellText } from "../cells";
 
 const collator = new Intl.Collator(undefined, { numeric: true });
 
@@ -349,8 +282,13 @@ export function DataGrid({
 
   /** `full` decodes large values completely: needed to edit or copy them, not to draw them. */
   const cellContent = useCallback(([dcol, drow]: Item, full: boolean): GridCell => {
-    const col = order[dcol];
-    const row = rowOrder ? rowOrder[drow] : drow;
+    const col = order[dcol] as number | undefined;
+    const row = (rowOrder ? rowOrder[drow] : drow) as number | undefined;
+    // The grid can ask for a cell the current result doesn't have (a stale row
+    // order or row count for one render after the data changes): draw it empty.
+    if (col === undefined || row === undefined || row < 0 || row >= table.numRows) {
+      return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false, readonly: true };
+    }
     const k = editKey(row, col);
     const edited = edits?.has(k) ?? false;
     let value: string | null;

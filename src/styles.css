@@ -310,3 +310,4 @@ button.chip:hover { border-color: var(--accent); }
 .msg-user-wrap { align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; align-items: flex-end; }
 .msg-user-wrap .msg-user { max-width: 100%; }
 .msg-user-wrap .attach-strip { justify-content: flex-end; }
+.tab-crash { width: 100%; }

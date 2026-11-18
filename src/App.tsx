@@ -8,6 +8,7 @@ import { Welcome } from "./components/Welcome";
 import { TableView } from "./components/TableView";
 import { QueryView } from "./components/QueryView";
 import { ChartTab } from "./components/ChartView";
+import { TabBoundary } from "./components/TabBoundary";
 import { ChatPanel } from "./components/ChatPanel";
 import { FeedbackDialog } from "./components/Feedback";
 import { QuickOpen } from "./components/QuickOpen";
@@ -160,9 +161,11 @@ export default function App() {
             )}
             {tabs.map((t) => (
               <div key={t.id} className="pane" style={{ display: t.id === s.activeTabId ? "flex" : "none" }}>
-                {t.kind === "table" && <TableView connectionId={t.connectionId} table={t.table} active={t.id === s.activeTabId} />}
-                {t.kind === "query" && <QueryView tabId={t.id} connectionId={t.connectionId} initialSql={t.sql} resultId={t.resultId} active={t.id === s.activeTabId} fromClaude={t.fromClaude} />}
-                {t.kind === "chart" && <ChartTab resultId={t.resultId} spec={t.spec} />}
+                <TabBoundary>
+                  {t.kind === "table" && <TableView connectionId={t.connectionId} table={t.table} active={t.id === s.activeTabId} />}
+                  {t.kind === "query" && <QueryView tabId={t.id} connectionId={t.connectionId} initialSql={t.sql} resultId={t.resultId} active={t.id === s.activeTabId} fromClaude={t.fromClaude} />}
+                  {t.kind === "chart" && <ChartTab resultId={t.resultId} spec={t.spec} />}
+                </TabBoundary>
               </div>
             ))}
           </div>
