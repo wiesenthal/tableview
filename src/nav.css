@@ -1,0 +1,71 @@
+/* Quick open */
+.quick-item { cursor: pointer; }
+.quick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick-name b { font-weight: 700; }
+.quick-item.on .quick-name b { text-decoration: underline; text-underline-offset: 2px; }
+.quick-schema { flex: none; padding-left: 12px; }
+.quick-empty { padding: 14px 12px; color: var(--text-2); text-align: center; }
+
+/* Tabs */
+.tabs { scrollbar-width: none; }
+.tab { flex: none; cursor: pointer; user-select: none; }
+.tab:not(.active):hover { background: var(--bg-hover); }
+.tab .close { opacity: 0; }
+.tab:hover .close, .tab.active:hover .close, .tab:focus-visible .close { opacity: 1; }
+.tab.active .close { opacity: .6; }
+.tabs .tabs-new { flex: none; align-self: center; margin-left: 4px; position: sticky; right: 4px; }
+.tabs .tabs-fill { flex: 1 0 24px; align-self: stretch; }
+
+/* Sidebar */
+.tree-item { cursor: pointer; }
+.tree-item.kbd:not(.active) { background: var(--bg-selected); }
+.tree-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search input:focus { outline: none; }
+
+/* Connections list */
+.conn-item { cursor: pointer; }
+.conn-item:focus { outline: none; }
+.conn-item:focus { background: var(--bg-selected); }
+.conn-item .meta .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Dialogs */
+.modal { max-width: calc(100vw - 32px); }
+.modal-actions .msg { min-width: 0; white-space: nowrap; }
+.modal-actions .btn { flex: none; }
+
+.tab.pinned .label { font-weight: 600; }
+.tab .pin { display: flex; color: var(--text-3); padding: 2px; }
+.tab.active .pin { color: var(--accent); }
+.tab-rename { flex: 1; min-width: 0; border: 1px solid var(--accent); border-radius: 4px; background: var(--bg-input); padding: 1px 4px; font-size: 12px; outline: none; }
+
+/* Keyboard focus. Mouse clicks stay ring-free (:focus-visible). */
+.btn:focus-visible, .icon-btn:focus-visible, .link-btn:focus-visible, .segmented button:focus-visible,
+.switch:focus-visible, .sidebar-conn:focus-visible, .tv-menu button:focus-visible,
+input[type="checkbox"]:focus-visible, select.field:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.segmented button:focus-visible { outline-offset: -2px; border-radius: 5px; }
+.conn-item:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.tree-group { cursor: pointer; }
+
+/* Connections list: the name truncates, the env badge never does. */
+.conn-item .meta .n { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.conn-item .conn-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn-item .env-badge { flex: none; }
+
+.link-btn { border: 0; background: transparent; color: var(--text-2); font-size: 12px; padding: 2px 6px; border-radius: 5px; display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; }
+.link-btn:hover { color: var(--accent); }
+
+/* Connection form */
+.form label.check { text-align: left; display: flex; gap: 6px; align-items: center; color: var(--text); }
+.form > div, .form > input, .form > select { min-width: 0; }
+.form-msg { margin: 0 16px 10px; padding: 7px 10px; border-radius: 7px; font-size: 12px; line-height: 1.4; user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
+.form-msg.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.form-msg.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+/* Keyboard shortcuts */
+.shortcuts { padding: 0 16px 8px; max-height: 64vh; overflow: auto; }
+.shortcuts-group { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .03em; padding: 10px 0 4px; }
+.shortcut { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.shortcut:last-child { border-bottom: 0; }
+kbd { font-family: var(--font); font-size: 12px; color: var(--text); background: var(--bg-toolbar); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; white-space: nowrap; }

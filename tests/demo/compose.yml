@@ -1,0 +1,20 @@
+# Demo database used for the README screenshots and benchmarks.
+# Seeding generates about 7M rows and takes a minute or two.
+#   docker compose -f tests/demo/compose.yml up -d --wait
+# Connect with: postgres@127.0.0.1:55433/acme (no password, local only).
+services:
+  demo:
+    image: postgres:17
+    container_name: tv-demo
+    environment:
+      POSTGRES_DB: acme
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - ./demo.sql:/docker-entrypoint-initdb.d/demo.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "psql -U postgres -d acme -Atc 'select count(*) from events' | grep -q 5000000"]
+      interval: 5s
+      timeout: 5s
+      retries: 60

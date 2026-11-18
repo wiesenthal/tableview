@@ -1,0 +1,28 @@
+# Seeded databases for the integration tests (TV_ITEST=1 cargo test) and manual testing.
+# Ports bind to 127.0.0.1 only; the password is a throwaway.
+name: tableview-seed
+services:
+  postgres:
+    image: postgres:16
+    container_name: tv-pg
+    environment:
+      POSTGRES_PASSWORD: tvpass
+      POSTGRES_DB: shop
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["./pg.sql:/docker-entrypoint-initdb.d/seed.sql:ro"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "shop"]
+      interval: 2s
+      retries: 30
+  mysql:
+    image: mysql:8.4
+    container_name: tv-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: tvpass
+      MYSQL_DATABASE: shop
+    ports: ["127.0.0.1:53306:3306"]
+    volumes: ["./mysql.sql:/docker-entrypoint-initdb.d/seed.sql:ro"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ptvpass"]
+      interval: 2s
+      retries: 60

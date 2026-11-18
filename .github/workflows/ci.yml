@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm packages
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Tauri embeds ../dist at compile time, so the frontend builds before cargo.
+      - name: Build frontend
+        run: npx vite build
+
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Clippy
+        working-directory: src-tauri
+        # Reported, not enforced, until the existing warnings are cleaned up.
+        run: cargo clippy --locked --all-targets
+        continue-on-error: true

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a4250"/>
+      <stop offset="1" stop-color="#1c2028"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".42" r=".6">
+      <stop offset="0" stop-color="#f3c98a" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#f3c98a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tileSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".10"/>
+      <stop offset=".45" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="topWood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e9ad66"/>
+      <stop offset=".55" stop-color="#c98443"/>
+      <stop offset="1" stop-color="#a8652c"/>
+    </linearGradient>
+    <linearGradient id="edgeWood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9a5a26"/>
+      <stop offset="1" stop-color="#6e3b16"/>
+    </linearGradient>
+    <linearGradient id="legFront" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7a4219"/>
+      <stop offset=".35" stop-color="#b97436"/>
+      <stop offset=".6" stop-color="#a0602a"/>
+      <stop offset="1" stop-color="#6a3712"/>
+    </linearGradient>
+    <linearGradient id="legBack" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4f2a0f"/>
+      <stop offset=".5" stop-color="#76421b"/>
+      <stop offset="1" stop-color="#4a270d"/>
+    </linearGradient>
+    <linearGradient id="legShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity=".45"/>
+      <stop offset=".25" stop-color="#000" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="polish" x1="0" y1="0" x2="1" y2="0" gradientTransform="rotate(18 .5 .5)">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".28" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".40" stop-color="#fff" stop-opacity=".38"/>
+      <stop offset=".47" stop-color="#fff" stop-opacity=".10"/>
+      <stop offset=".56" stop-color="#fff" stop-opacity=".22"/>
+      <stop offset=".66" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="topFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.0035 0.055" numOctaves="4" seed="7"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.42  0 0 0 0 0.17  0 0 0 0 0.03  0 0 0 -2.8 1.6"/>
+    </filter>
+    <filter id="fleck" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.02 0.25" numOctaves="2" seed="3"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 .9  0 0 0 0 .7  0 0 0 -3 1.2"/>
+    </filter>
+    <filter id="blur" x="-30%" y="-80%" width="160%" height="260%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+
+    <clipPath id="topClip"><path d="M286 372 H738 Q762 372 772 392 L842 516 Q852 536 828 536 H196 Q172 536 182 516 L252 392 Q262 372 286 372Z"/></clipPath>
+    <clipPath id="edgeClip"><path d="M180 520 Q172 536 196 536 H828 Q852 536 844 520 L846 568 Q846 586 826 586 H198 Q178 586 178 568Z"/></clipPath>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="184"/></clipPath>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#glow)"/>
+
+  <g clip-path="url(#tile)">
+    <ellipse cx="512" cy="812" rx="330" ry="34" fill="#000" opacity=".55" filter="url(#blur)"/>
+
+    <path d="M300 560 H336 L331 740 H305Z" fill="url(#legBack)"/>
+    <path d="M688 560 H724 L719 740 H693Z" fill="url(#legBack)"/>
+    <path d="M226 580 H798 V624 Q798 632 790 632 H234 Q226 632 226 624Z" fill="#5c3110"/>
+    <path d="M226 580 H798 V592 H226Z" fill="#000" opacity=".35"/>
+
+    <path d="M204 570 H262 L252 800 Q251 812 240 812 H226 Q215 812 214 800Z" fill="url(#legFront)"/>
+    <path d="M204 570 H262 L252 800 Q251 812 240 812 H226 Q215 812 214 800Z" fill="url(#legShade)"/>
+    <path d="M762 570 H820 L810 800 Q809 812 798 812 H784 Q773 812 772 800Z" fill="url(#legFront)"/>
+    <path d="M762 570 H820 L810 800 Q809 812 798 812 H784 Q773 812 772 800Z" fill="url(#legShade)"/>
+
+    <g clip-path="url(#edgeClip)">
+      <rect x="160" y="500" width="704" height="100" fill="url(#edgeWood)"/>
+      <rect x="160" y="500" width="704" height="100" filter="url(#grain)" opacity=".55"/>
+      <rect x="160" y="534" width="704" height="4" fill="#ffd9a6" opacity=".35"/>
+    </g>
+
+    <g clip-path="url(#topClip)">
+      <rect x="160" y="360" width="704" height="190" fill="url(#topWood)"/>
+      <rect x="160" y="360" width="704" height="190" filter="url(#grain)" opacity=".6"/>
+      <rect x="160" y="360" width="704" height="190" filter="url(#fleck)" opacity=".12"/>
+      <g stroke="#5a2f0f" stroke-opacity=".45" stroke-width="3">
+        <line x1="160" y1="413" x2="864" y2="413"/>
+        <line x1="160" y1="466" x2="864" y2="466"/>
+      </g>
+      <g stroke="#ffe2b8" stroke-opacity=".25" stroke-width="2">
+        <line x1="160" y1="416" x2="864" y2="416"/>
+        <line x1="160" y1="469" x2="864" y2="469"/>
+      </g>
+      <rect x="160" y="360" width="704" height="190" fill="url(#topFade)"/>
+      <rect x="160" y="360" width="704" height="190" fill="url(#polish)"/>
+    </g>
+    <path d="M286 372 H738 Q762 372 772 392 L842 516 Q852 536 828 536 H196 Q172 536 182 516 L252 392 Q262 372 286 372Z"
+          fill="none" stroke="#ffe7c4" stroke-opacity=".3" stroke-width="2"/>
+    <path d="M196 536 H828" stroke="#fff3df" stroke-opacity=".7" stroke-width="3"/>
+  </g>
+
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#tileSheen)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="182.5" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="3"/>
+</svg>

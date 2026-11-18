@@ -1,0 +1,60 @@
+[package]
+name = "tableview"
+version = "0.1.0"
+description = "A fast macOS database client for Postgres, MySQL and SQLite, with Claude built in"
+authors = ["Zach Wiesenthal"]
+license = "MIT"
+repository = "https://github.com/zwiesenthal/tableview"
+readme = "../README.md"
+edition = "2024"
+publish = false
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name.
+name = "tableview_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite", "chrono", "uuid", "json", "bigdecimal", "ipnetwork", "mysql-rsa"] }
+rmcp = { version = "3.10", features = ["server", "macros", "transport-streamable-http-server"] }
+tokio = { version = "1.54.1", features = ["full"] }
+axum = "0.8.9"
+arrow-array = "60"
+arrow-schema = "60"
+arrow-ipc = "60"
+schemars = "1.2.3"
+anyhow = "1.0.104"
+chrono = "0.4.45"
+uuid = { version = "1.29.2", features = ["v4"] }
+sqlparser = { version = "0.64.0", features = ["visitor"] }
+rand = "0.10.4"
+subtle = "2.6.1"
+window-vibrancy = "0.8.1"
+tauri-plugin-single-instance = "2.5.5"
+futures = "0.3.34"
+hex = "0.4.3"
+dirs = "7.0.0"
+security-framework = "3.7.0"
+bigdecimal = "0.4.11"
+ipnetwork = "0.21.1"
+tauri-plugin-dialog = "2.8.4"
+
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
+tower = { version = "0.5", features = ["util"] }
