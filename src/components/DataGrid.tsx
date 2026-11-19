@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataEditor, {
-  CompactSelection, DataEditorRef, EditableGridCell, GridCell, GridCellKind, GridColumn, GridSelection, Item, Rectangle, Theme,
+  CellClickedEventArgs, CompactSelection, DataEditorRef, DrawCellCallback, EditableGridCell, GridCell, GridCellKind, GridColumn,
+  GridMouseEventArgs, GridSelection, Item, Rectangle, Theme,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
 import "../grid.css";
@@ -76,7 +77,10 @@ function gridTheme(dark: boolean): Partial<Theme> {
       };
 }
 
-export const editKey = (row: number, col: number) => `${row}:${col}`;
+/** Width at a link cell's right edge that holds the foreign key arrow and follows it on click. */
+const LINK_HIT = 22;
+
+export const editKey =(row: number, col: number) => `${row}:${col}`;
 
 const EMPTY_SELECTION: GridSelection = { columns: CompactSelection.empty(), rows: CompactSelection.empty() };
 
@@ -142,6 +146,9 @@ export interface GridProps {
   rowOrder?: Int32Array;
   /** Primary and foreign key column names, shortened like ID columns. */
   keyColumns?: Set<string>;
+  /** Foreign key columns: hovering a value shows an arrow that follows the key. */
+  links?: ReadonlyMap<string, unknown>;
+  onFollowLink?: (column: string, value: string) => void;
   /** Remembers resized column widths under this key for the session. */
   widthKey?: string;
   /** Saves column order and widths under this key across restarts (dragged headers stay put). */
@@ -154,7 +161,7 @@ export interface GridProps {
 
 export function DataGrid({
   table, editable, edits, deleted, onEdit, onSelectRow, onSelectionRows, onDeleteRows, sort, onHeaderClick, rowOffset = 0, rowOrder, keyColumns,
-  widthKey, layoutKey, resetKey, search = true,
+  links, onFollowLink, widthKey, layoutKey, resetKey, search = true,
 }: GridProps) {
   const prefs = useStore((s) => s.prefs);
   const formats = useMemo(() => columnFormats(table.schema.fields, keyColumns), [table, keyColumns]);
@@ -325,6 +332,60 @@ export function DataGrid({
     return out;
   }, [cellContent]);
 
+  /** The foreign key value at a display cell, or null when it isn't a link (or is NULL). */
+  const linkValue = useCallback(([dcol, drow]: Item): string | null => {
+    const col = order[dcol] as number | undefined;
+    const row = (rowOrder ? rowOrder[drow] : drow) as number | undefined;
+    if (!links?.size || col === undefined || row === undefined || row < 0 || row >= table.numRows) return null;
+    if (!links.has(names[col]) || deleted?.has(row)) return null;
+    const k = editKey(row, col);
+    return edits?.has(k) ? edits.get(k)! : cellText(table, col, row);
+  }, [links, order, rowOrder, names, table, edits, deleted]);
+
+  // The hovered cell is drawn with the link arrow; Glide doesn't redraw text cells on hover, so damage them.
+  const hovered = useRef<Item | null>(null);
+  const onItemHovered = useCallback((args: GridMouseEventArgs) => {
+    const prev = hovered.current;
+    const next = args.kind === "cell" ? args.location : null;
+    if (prev?.[0] === next?.[0] && prev?.[1] === next?.[1]) return;
+    hovered.current = next;
+    if (!links?.size) return;
+    grid.current?.updateCells([prev, next].filter((c): c is Item => !!c).map((cell) => ({ cell })));
+  }, [links]);
+
+  const drawCell = useCallback<DrawCellCallback>((args, drawContent) => {
+    drawContent();
+    const h = hovered.current;
+    if (!h || h[0] !== args.col || h[1] !== args.row || linkValue([args.col, args.row]) === null) return;
+    const { ctx, rect, theme: t } = args;
+    const r = 7, cx = rect.x + rect.width - LINK_HIT / 2, cy = rect.y + rect.height / 2;
+    ctx.save();
+    ctx.fillStyle = t.accentColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(cx - 3.5, cy);
+    ctx.lineTo(cx + 3.5, cy);
+    ctx.moveTo(cx + 0.5, cy - 3);
+    ctx.lineTo(cx + 3.5, cy);
+    ctx.lineTo(cx + 0.5, cy + 3);
+    ctx.stroke();
+    ctx.restore();
+  }, [linkValue]);
+
+  const onCellClicked = useCallback((cell: Item, e: CellClickedEventArgs) => {
+    if (e.localEventX < e.bounds.width - LINK_HIT) return;
+    const value = linkValue(cell);
+    if (value === null) return;
+    e.preventDefault();
+    onFollowLink?.(names[order[cell[0]]], value);
+  }, [linkValue, onFollowLink, names, order]);
+
   const onCellEdited = useCallback(([dcol, row]: Item, cell: EditableGridCell) => {
     if (cell.kind !== GridCellKind.Text) return;
     onEdit?.(row, order[dcol], cell.data);
@@ -353,6 +414,9 @@ export function DataGrid({
       onCellEdited={editable ? onCellEdited : undefined}
       onDelete={onDelete}
       getCellsForSelection={getCellsForSelection}
+      onItemHovered={onItemHovered}
+      drawCell={links?.size ? drawCell : undefined}
+      onCellClicked={links?.size ? onCellClicked : undefined}
       onColumnResize={onColumnResize}
       maxColumnWidth={1200}
       cellActivationBehavior="double-click"

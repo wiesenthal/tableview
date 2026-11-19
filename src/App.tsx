@@ -162,7 +162,7 @@ export default function App() {
             {tabs.map((t) => (
               <div key={t.id} className="pane" style={{ display: t.id === s.activeTabId ? "flex" : "none" }}>
                 <TabBoundary>
-                  {t.kind === "table" && <TableView connectionId={t.connectionId} table={t.table} active={t.id === s.activeTabId} />}
+                  {t.kind === "table" && <TableView connectionId={t.connectionId} table={t.table} filters={t.filters} active={t.id === s.activeTabId} />}
                   {t.kind === "query" && <QueryView tabId={t.id} connectionId={t.connectionId} initialSql={t.sql} resultId={t.resultId} active={t.id === s.activeTabId} fromClaude={t.fromClaude} />}
                   {t.kind === "chart" && <ChartTab resultId={t.resultId} spec={t.spec} />}
                 </TabBoundary>

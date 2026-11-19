@@ -33,6 +33,14 @@ export interface ColumnInfo {
   default: string | null;
   is_pk: boolean;
   is_fk: boolean;
+  /** Where this column's foreign key points. */
+  references?: ForeignRef;
+}
+
+export interface ForeignRef {
+  schema: string;
+  table: string;
+  column: string;
 }
 
 export interface IndexInfo {
@@ -119,6 +127,6 @@ export interface ChatSettings {
 }
 
 export type Tab =
-  | { id: string; kind: "table"; connectionId: string; table: TableRef; pinned?: boolean }
+  | { id: string; kind: "table"; connectionId: string; table: TableRef; pinned?: boolean; filters?: Filter[] }
   | { id: string; kind: "query"; connectionId: string; title: string; sql: string; resultId?: string; fromClaude?: boolean; pinned?: boolean }
   | { id: string; kind: "chart"; connectionId: string; title: string; resultId: string; spec: VizSpec; pinned?: boolean };

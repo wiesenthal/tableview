@@ -8,7 +8,7 @@ use arrow_array::RecordBatch;
 use serde_json::json;
 
 use crate::config::{ConnectionConfig, DbKind, Store};
-use crate::db::{self, BrowseOptions, Filter, OrderBy};
+use crate::db::{self, BrowseOptions, Filter, ForeignRef, OrderBy};
 use crate::edits::{self, CellEdit, Changes, arrow_text};
 use crate::state::AppState;
 
@@ -201,6 +201,25 @@ async fn sqlite_per_value_typing_widens() {
 }
 
 #[tokio::test]
+async fn sqlite_foreign_keys_name_their_target() {
+    if !enabled() {
+        return;
+    }
+    let st = state();
+    st.run_editor_query("lite", "t", "CREATE TABLE fk_c (id INTEGER PRIMARY KEY); CREATE TABLE fk_o (id INTEGER PRIMARY KEY, c INT REFERENCES fk_c, d INT REFERENCES fk_c(id), n INT)", "q").await.unwrap();
+    let s = st.pool("lite").await.unwrap().describe("main", "fk_o").await.unwrap();
+    let target = |name: &str| s.columns.iter().find(|c| c.name == name).and_then(|c| c.references.clone());
+    let to_c = Some(ForeignRef {
+        schema: "main".into(),
+        table: "fk_c".into(),
+        column: "id".into(),
+    });
+    assert_eq!(target("c"), to_c, "implicit target column is the primary key");
+    assert_eq!(target("d"), to_c);
+    assert_eq!(target("n"), None);
+}
+
+#[tokio::test]
 async fn introspection_browse_and_count() {
     if !enabled() {
         return;
@@ -228,6 +247,16 @@ async fn introspection_browse_and_count() {
             assert!(
                 s.columns.iter().any(|c| c.name == "customer_id" && c.is_fk),
                 "pg fk"
+            );
+            let target = s.columns.iter().find(|c| c.name == "customer_id");
+            assert_eq!(
+                target.and_then(|c| c.references.clone()),
+                Some(ForeignRef {
+                    schema: "public".into(),
+                    table: "customers".into(),
+                    column: "id".into(),
+                }),
+                "pg fk target"
             );
             assert!(
                 !s.columns.iter().any(|c| c.name == "total" && c.is_fk),
