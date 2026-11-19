@@ -6,6 +6,9 @@ import type {
   TableStructure,
 } from "./types";
 
+/** A saved query from TablePlus; `folder` is "/"-joined, empty at the top level. */
+export type Favorite = { folder: string; name: string; sql: string };
+
 export const api = {
   listConnections: () => invoke<ConnectionConfig[]>("list_connections"),
   saveConnection: (config: ConnectionConfig, password: string | null) =>
@@ -39,6 +42,7 @@ export const api = {
   chatStop: (conversation: string) => invoke<void>("chat_stop", { conversation }),
   getPrefs: () => invoke<Record<string, unknown>>("get_prefs"),
   savePrefs: (prefs: Record<string, unknown>) => invoke<void>("save_prefs", { prefs }),
+  listFavorites: () => invoke<Favorite[]>("list_favorites"),
   claudeAuthStatus: () => invoke<{ cli_found: boolean; logged_in: boolean; method: string }>("claude_auth_status"),
   claudeLogin: () => invoke<void>("claude_login"),
   claudeLoginCode: (code: string) => invoke<void>("claude_login_code", { code }),

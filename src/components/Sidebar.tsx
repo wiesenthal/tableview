@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Eye, PanelLeftClose, Plus, RefreshCw, Search, Settings, Sparkles, Table2, TerminalSquare, MessageSquarePlus } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, FileCode2, PanelLeftClose, Plus, RefreshCw, Search, Settings, Sparkles, Table2, TerminalSquare, MessageSquarePlus } from "lucide-react";
 import { activeConnection, ENV_COLORS, useStore } from "../store";
+import { api, Favorite } from "../api";
 import "../nav.css";
 
 export function Sidebar() {
@@ -21,6 +22,27 @@ export function Sidebar() {
       .map((g) => ({ ...g, tables: g.tables.filter((t) => !needle || t.name.toLowerCase().includes(needle)) }))
       .filter((g) => g.tables.length);
   }, [tree, q]);
+
+  // TablePlus saved queries, grouped by folder. Folders start closed.
+  const [favorites, setFavorites] = useState<Favorite[]>([]);
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+  const loadFavorites = () => api.listFavorites().then(setFavorites).catch(() => setFavorites([]));
+  useEffect(() => { loadFavorites(); }, []);
+  const favGroups = useMemo(() => {
+    const needle = q.toLowerCase();
+    const m = new Map<string, Favorite[]>();
+    for (const f of favorites) {
+      if (needle && !f.name.toLowerCase().includes(needle)) continue;
+      m.set(f.folder, [...(m.get(f.folder) ?? []), f]);
+    }
+    return [...m.entries()];
+  }, [favorites, q]);
+  const favKey = "\u0000favorites";
+  const toggleFolder = (k: string) => setOpenFolders((c) => {
+    const n = new Set(c);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
 
   const flat = useMemo(() => groups.flatMap((g) => (collapsed.has(g.name) && !q ? [] : g.tables)), [groups, collapsed, q]);
 
@@ -92,10 +114,43 @@ export function Sidebar() {
           );
         })}
         {tree && groups.length === 0 && <div style={{ padding: 10, color: "var(--text-2)" }}>{q ? "No matches" : "No tables"}</div>}
+        {favGroups.length > 0 && (
+          <div>
+            <div className="tree-group" title="Saved queries from TablePlus" onClick={() => setCollapsed((c) => {
+              const n = new Set(c);
+              if (n.has(favKey)) n.delete(favKey); else n.add(favKey);
+              return n;
+            })}>
+              {collapsed.has(favKey) && !q ? <ChevronRight size={11} /> : <ChevronDown size={11} />}Favorites
+              <span style={{ marginLeft: "auto", fontWeight: 400 }}>{favGroups.reduce((n, [, fs]) => n + fs.length, 0)}</span>
+            </div>
+            {!(collapsed.has(favKey) && !q) && favGroups.map(([folder, fs]) => {
+              const open = !folder || openFolders.has(folder) || !!q;
+              const depth = folder ? 1 : 0;
+              return (
+                <div key={folder}>
+                  {folder && (
+                    <div className="tree-item" style={{ paddingLeft: 10 }} title={folder} onClick={() => toggleFolder(folder)}>
+                      {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      <span>{folder.split("/").join(" / ")}</span>
+                    </div>
+                  )}
+                  {open && fs.map((f) => (
+                    <div key={f.name} className="tree-item" style={depth ? { paddingLeft: 26 } : undefined} title={f.sql.slice(0, 500)}
+                      onClick={() => s.openQuery({ sql: f.sql, title: f.name })}>
+                      <FileCode2 size={13} />
+                      <span>{f.name}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="sidebar-footer">
         <button className="icon-btn" title="New query (⌘T)" onClick={() => s.openQuery()}><TerminalSquare size={14} /></button>
-        <button className="icon-btn" title="Refresh schema" onClick={() => s.refreshSchema()}><RefreshCw size={13} /></button>
+        <button className="icon-btn" title="Refresh schema" onClick={() => { s.refreshSchema(); loadFavorites(); }}><RefreshCw size={13} /></button>
         <button className="icon-btn" title="Claude (⌘K)" onClick={() => s.set({ chatOpen: !s.chatOpen })}><Sparkles size={14} /></button>
         <div style={{ flex: 1 }} />
         <button className="icon-btn" title="New connection" onClick={() => s.set({ editingConnection: "new" })}><Plus size={14} /></button>
