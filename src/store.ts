@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api, connectErrorText, errorText } from "./api";
 import { DEFAULT_PREFS, Prefs, withDefaults } from "./prefs";
-import type { ChatSettings, ConnectionConfig, SchemaTree, Tab, TableRef, VizSpec } from "./types";
+import type { ChatSettings, ConnectionConfig, Filter, SchemaTree, Tab, TableRef, VizSpec } from "./types";
 
 type SavedTab = { kind: "table"; table: TableRef } | { kind: "query"; title: string; sql: string };
 
@@ -73,7 +73,8 @@ interface State {
   closeConnection(): void;
   deleteConnection(id: string): Promise<boolean>;
   refreshSchema(): Promise<void>;
-  openTable(t: TableRef, connectionId?: string): void;
+  /** `filters` open it filtered, or re-filter the tab already open on it. */
+  openTable(t: TableRef, connectionId?: string, filters?: Filter[]): void;
   openQuery(opts?: { sql?: string; title?: string; resultId?: string; connectionId?: string; fromClaude?: boolean }): string;
   openChart(connectionId: string, resultId: string, spec: VizSpec, title: string): void;
   updateTab(id: string, patch: Partial<Tab>): void;
@@ -210,14 +211,17 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  openTable(table, connectionId) {
+  openTable(table, connectionId, filters) {
     const conn = connectionId ?? get().activeConnectionId;
     if (!conn) return;
     const existing = get().tabs.find(
       (t) => t.kind === "table" && t.connectionId === conn && t.table.schema === table.schema && t.table.name === table.name,
     );
-    if (existing) return set({ activeTabId: existing.id, selectedTable: table });
-    const tab: Tab = { id: newId("tab"), kind: "table", connectionId: conn, table };
+    if (existing) {
+      if (filters) set((s) => ({ tabs: s.tabs.map((t) => (t.id === existing.id ? { ...t, filters } as Tab : t)) }));
+      return set({ activeTabId: existing.id, selectedTable: table });
+    }
+    const tab: Tab = { id: newId("tab"), kind: "table", connectionId: conn, table, filters };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, selectedTable: table }));
   },
 

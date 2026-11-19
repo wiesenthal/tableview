@@ -356,6 +356,7 @@ mod tests {
                     default: None,
                     is_pk: true,
                     is_fk: false,
+                    references: None,
                 },
                 ColumnInfo {
                     name: "name".into(),
@@ -364,6 +365,7 @@ mod tests {
                     default: None,
                     is_pk: false,
                     is_fk: false,
+                    references: None,
                 },
                 ColumnInfo {
                     name: "score".into(),
@@ -372,6 +374,7 @@ mod tests {
                     default: None,
                     is_pk: false,
                     is_fk: false,
+                    references: None,
                 },
             ],
             indexes: vec![],

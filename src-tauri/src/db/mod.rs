@@ -104,6 +104,30 @@ pub struct ColumnInfo {
     /// Part of a foreign key.
     #[serde(default)]
     pub is_fk: bool,
+    /// The column this one's foreign key points at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<ForeignRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForeignRef {
+    pub schema: String,
+    pub table: String,
+    pub column: String,
+}
+
+impl ForeignRef {
+    /// Parses `schema␟table␟column` (joined by the unit separator, U+001F), the
+    /// shape `describe` selects so every driver returns it as one text column.
+    fn parse(s: &str) -> Option<Self> {
+        let mut it = s.split('\u{1f}');
+        let (schema, table, column) = (it.next()?, it.next()?, it.next()?);
+        (it.next().is_none() && !table.is_empty() && !column.is_empty()).then(|| ForeignRef {
+            schema: schema.into(),
+            table: table.into(),
+            column: column.into(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -803,7 +827,11 @@ impl Pool {
             Pool::Pg(..) => (
                 "SELECT a.attname::text, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
                  pg_get_expr(d.adbin, d.adrelid), COALESCE(a.attnum = ANY(i.indkey), false), \
-                 EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'f' AND a.attnum = ANY(k.conkey)) \
+                 EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'f' AND a.attnum = ANY(k.conkey)), \
+                 (SELECT fn.nspname::text || chr(31) || fc.relname::text || chr(31) || fa.attname::text FROM pg_constraint k \
+                  JOIN pg_class fc ON fc.oid = k.confrelid JOIN pg_namespace fn ON fn.oid = fc.relnamespace \
+                  JOIN pg_attribute fa ON fa.attrelid = k.confrelid AND fa.attnum = k.confkey[array_position(k.conkey, a.attnum)] \
+                  WHERE k.conrelid = c.oid AND k.contype = 'f' AND a.attnum = ANY(k.conkey) ORDER BY k.conname LIMIT 1) \
                  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
                  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
                  LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary \
@@ -819,7 +847,11 @@ impl Pool {
                 "SELECT CAST(COLUMN_NAME AS CHAR), CAST(COLUMN_TYPE AS CHAR), IS_NULLABLE = 'YES', \
                  CAST(COLUMN_DEFAULT AS CHAR), COLUMN_KEY = 'PRI', EXISTS (SELECT 1 FROM information_schema.KEY_COLUMN_USAGE k \
                  WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME AND k.COLUMN_NAME = c.COLUMN_NAME \
-                 AND k.REFERENCED_TABLE_NAME IS NOT NULL) FROM information_schema.COLUMNS c \
+                 AND k.REFERENCED_TABLE_NAME IS NOT NULL), \
+                 (SELECT CAST(CONCAT_WS(CHAR(31), k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME) AS CHAR) \
+                 FROM information_schema.KEY_COLUMN_USAGE k WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME \
+                 AND k.COLUMN_NAME = c.COLUMN_NAME AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.CONSTRAINT_NAME LIMIT 1) \
+                 FROM information_schema.COLUMNS c \
                  WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ? ORDER BY c.ORDINAL_POSITION",
                 "SELECT CAST(INDEX_NAME AS CHAR), CAST(GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS CHAR), \
                  MIN(NON_UNIQUE) = 0 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
@@ -827,7 +859,10 @@ impl Pool {
             ),
             Pool::Lite { .. } => (
                 "SELECT name, type, \"notnull\" = 0, dflt_value, pk > 0, \
-                 EXISTS (SELECT 1 FROM pragma_foreign_key_list(?2) f WHERE f.\"from\" = name) \
+                 EXISTS (SELECT 1 FROM pragma_foreign_key_list(?2) f WHERE f.\"from\" = name), \
+                 (SELECT 'main' || char(31) || f.\"table\" || char(31) || \
+                  COALESCE(f.\"to\", (SELECT p.name FROM pragma_table_info(f.\"table\") p WHERE p.pk = 1)) \
+                  FROM pragma_foreign_key_list(?2) f WHERE f.\"from\" = name LIMIT 1) \
                  FROM pragma_table_info(?2) WHERE ?1 = ?1",
                 "SELECT il.name, group_concat(ii.name, ','), il.\"unique\" FROM pragma_index_list(?2) il, \
                  pragma_index_info(il.name) ii WHERE ?1 = ?1 GROUP BY il.name ORDER BY 1",
@@ -844,6 +879,7 @@ impl Pool {
                 default: s(&r[3]),
                 is_pk: b(&r[4]),
                 is_fk: b(&r[5]),
+                references: s(&r[6]).as_deref().and_then(ForeignRef::parse),
             })
             .collect::<Vec<_>>();
         if columns.is_empty() {
@@ -1268,6 +1304,7 @@ mod tests {
                     default: None,
                     is_pk: true,
                     is_fk: false,
+                    references: None,
                 },
                 ColumnInfo {
                     name: "na\"me".into(),
@@ -1276,6 +1313,7 @@ mod tests {
                     default: None,
                     is_pk: false,
                     is_fk: false,
+                    references: None,
                 },
             ],
             indexes: vec![],
@@ -1416,6 +1454,21 @@ mod tests {
     }
 
     #[test]
+    fn foreign_ref_parses_the_joined_target() {
+        assert_eq!(
+            ForeignRef::parse("public\u{1f}my.table\u{1f}id"),
+            Some(ForeignRef {
+                schema: "public".into(),
+                table: "my.table".into(),
+                column: "id".into(),
+            })
+        );
+        assert_eq!(ForeignRef::parse("public\u{1f}t"), None);
+        assert_eq!(ForeignRef::parse("public\u{1f}t\u{1f}"), None);
+        assert_eq!(ForeignRef::parse("a\u{1f}b\u{1f}c\u{1f}d"), None);
+    }
+
+    #[test]
     fn composite_key_orders_by_index_and_exotic_types_are_cast() {
         let col = |name: &str, ty: &str, pk: bool| ColumnInfo {
             name: name.into(),
@@ -1424,6 +1477,7 @@ mod tests {
             default: None,
             is_pk: pk,
             is_fk: false,
+            references: None,
         };
         let st = TableStructure {
             columns: vec![

@@ -54,14 +54,14 @@ function prettyJson(text: string): string | null {
 
 let lastInspectorWidth = 320;
 
-export function TableView({ connectionId, table: ref, active }: { connectionId: string; table: TableRef; active: boolean }) {
+export function TableView({ connectionId, table: ref, filters, active }: { connectionId: string; table: TableRef; filters?: Filter[]; active: boolean }) {
   const notify = useStore((s) => s.notify);
   const readOnly = useStore((s) => s.connections.find((c) => c.id === connectionId)?.read_only ?? false);
   const [mode, setMode] = useState<"data" | "structure">("data");
   const [structure, setStructure] = useState<TableStructure | null>(null);
-  const [opts, setOpts] = useState<BrowseOptions>({ limit: 1000, offset: 0, filters: [], order_by: null });
-  const [draftFilters, setDraftFilters] = useState<Filter[]>([]);
-  const [showFilters, setShowFilters] = useState(false);
+  const [opts, setOpts] = useState<BrowseOptions>({ limit: 1000, offset: 0, filters: filters ?? [], order_by: null });
+  const [draftFilters, setDraftFilters] = useState<Filter[]>(filters ?? []);
+  const [showFilters, setShowFilters] = useState(!!filters?.length);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [data, setData] = useState<Table | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -88,6 +88,18 @@ export function TableView({ connectionId, table: ref, active }: { connectionId: 
     () => new Set((structure?.columns ?? []).filter((c) => c.is_pk || c.is_fk).map((c) => c.name)),
     [structure],
   );
+  const links = useMemo(
+    () => new Map((structure?.columns ?? []).flatMap((c) => (c.references ? [[c.name, c.references] as const] : []))),
+    [structure],
+  );
+  /** Opens the row a foreign key value points at, as a filtered tab on its table. */
+  const followLink = useCallback((column: string, value: string) => {
+    const to = links.get(column);
+    if (!to) return;
+    const s = useStore.getState();
+    const target = s.schemas[connectionId]?.schemas.flatMap((g) => g.tables).find((t) => t.schema === to.schema && t.name === to.table);
+    s.openTable(target ?? { schema: to.schema, name: to.table, kind: "table" }, connectionId, [{ column: to.column, op: "=", value }]);
+  }, [links, connectionId]);
   const editable = !readOnly && ref.kind === "table" && (structure?.columns.some((c) => c.is_pk) ?? false);
   const pending = edits.size + deleted.size + inserts.length;
 
@@ -158,6 +170,17 @@ export function TableView({ connectionId, table: ref, active }: { connectionId: 
     setOpts(o);
     load(o, refresh);
   };
+
+  // A foreign key link into this already-open tab: show the row it points at.
+  const firstFilters = useRef(filters);
+  useEffect(() => {
+    if (!filters || filters === firstFilters.current) return;
+    firstFilters.current = filters;
+    setDraftFilters(filters);
+    setShowFilters(true);
+    apply({ filters, offset: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
 
   const changes = useCallback((): Changes => {
     const out: Changes = { edits: [], deletes: [...deleted], inserts };
@@ -383,7 +406,10 @@ export function TableView({ connectionId, table: ref, active }: { connectionId: 
                       <td className="mono" style={{ color: "var(--text-2)" }}>{c.data_type}</td>
                       <td>{c.nullable ? "YES" : "NO"}</td>
                       <td className="mono" style={{ color: "var(--text-2)" }}>{c.default ?? ""}</td>
-                      <td>{[c.is_pk && "PRIMARY", c.is_fk && "FOREIGN"].filter(Boolean).join(", ")}</td>
+                      <td>
+                        {[c.is_pk && "PRIMARY", c.is_fk && "FOREIGN"].filter(Boolean).join(", ")}
+                        {c.references && <span className="mono" style={{ color: "var(--text-2)" }}> → {c.references.table}.{c.references.column}</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -408,7 +434,7 @@ export function TableView({ connectionId, table: ref, active }: { connectionId: 
               {data && (
                 <DataGrid table={data} editable={editable} edits={edits} deleted={deleted} onEdit={onEdit}
                   onSelectRow={setSelectedRow} onSelectionRows={setSelectedRows} onDeleteRows={toggleDeleted}
-                  sort={opts.order_by} onHeaderClick={sortBy} rowOffset={opts.offset} keyColumns={keyColumns} layoutKey={`${connectionId}:${ref.schema}.${ref.name}`}
+                  sort={opts.order_by} onHeaderClick={sortBy} rowOffset={opts.offset} keyColumns={keyColumns} links={links} onFollowLink={followLink} layoutKey={`${connectionId}:${ref.schema}.${ref.name}`}
                   widthKey={`${connectionId}:${ref.schema}.${ref.name}`} resetKey={resetKey} search={false} />
               )}
             </div>
