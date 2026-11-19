@@ -14,7 +14,7 @@ use sqlx::AssertSqlSafe;
 
 use crate::config::DbKind;
 use crate::db::columns::{format_date, format_ts};
-use crate::db::{Pool, TableStructure, param, qualified, quote_ident};
+use crate::db::{PgRoute, Pool, TableStructure, param, qualified, quote_ident};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CellEdit {
@@ -292,34 +292,51 @@ pub fn preview(stmts: &[Stmt]) -> Vec<String> {
 }
 
 macro_rules! run_tx {
-    ($pool:expr, $db:ty, $stmts:expr) => {{
+    ($pool:expr, $db:ty, $stmts:expr, $tx_pooler:expr) => {{
         let mut tx = $pool.begin().await?;
-        let mut total = 0u64;
-        for (i, s) in $stmts.iter().enumerate() {
-            let mut q = sqlx::query::<$db>(AssertSqlSafe(s.sql.clone()));
-            for b in &s.binds {
-                q = q.bind(b.clone());
+        let res: anyhow::Result<u64> = async {
+            let mut total = 0u64;
+            for (i, s) in $stmts.iter().enumerate() {
+                let mut q = sqlx::query::<$db>(AssertSqlSafe(s.sql.clone()));
+                for b in &s.binds {
+                    q = q.bind(b.clone());
+                }
+                let n = q.execute(&mut *tx).await.map_err(|e| anyhow::anyhow!("statement {}: {e}", i + 1))?.rows_affected();
+                if s.expect_one && n != 1 {
+                    anyhow::bail!(
+                        "statement {} changed {n} rows, expected 1. The row was changed or deleted since it was loaded, so nothing was saved. Refresh and try again.",
+                        i + 1
+                    );
+                }
+                total += n;
             }
-            let n = q.execute(&mut *tx).await.map_err(|e| anyhow::anyhow!("statement {}: {e}", i + 1))?.rows_affected();
-            if s.expect_one && n != 1 {
-                tx.rollback().await?;
-                anyhow::bail!(
-                    "statement {} changed {n} rows, expected 1. The row was changed or deleted since it was loaded, so nothing was saved. Refresh and try again.",
-                    i + 1
-                );
-            }
-            total += n;
+            Ok(total)
         }
-        tx.commit().await?;
-        Ok(total)
+        .await;
+        if $tx_pooler {
+            // The statements would outlive the transaction on a server connection
+            // the pooler shares with other clients.
+            sqlx::Connection::clear_cached_statements(&mut *tx).await?;
+        }
+        match res {
+            Ok(total) => {
+                tx.commit().await?;
+                Ok(total)
+            }
+            Err(e) => {
+                // The statement's error is the one worth reporting.
+                let _ = tx.rollback().await;
+                Err(e)
+            }
+        }
     }};
 }
 
 pub async fn execute(pool: &Pool, stmts: &[Stmt]) -> anyhow::Result<u64> {
     match pool {
-        Pool::Pg(p) => run_tx!(p, sqlx::Postgres, stmts),
-        Pool::My(p) => run_tx!(p, sqlx::MySql, stmts),
-        Pool::Lite { rw, .. } => run_tx!(rw, sqlx::Sqlite, stmts),
+        Pool::Pg(p, route) => run_tx!(p, sqlx::Postgres, stmts, *route == PgRoute::TxPooler),
+        Pool::My(p) => run_tx!(p, sqlx::MySql, stmts, false),
+        Pool::Lite { rw, .. } => run_tx!(rw, sqlx::Sqlite, stmts, false),
     }
 }
 

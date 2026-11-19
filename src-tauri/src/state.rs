@@ -232,7 +232,13 @@ impl AppState {
         if self.config(connection_id)?.read_only {
             // Enforced by the server, not just the SQL parser.
             let stmt = match fresh.conn {
-                Conn::Pg(_) => Some("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"),
+                // A session setting would land on a server connection the pooler
+                // shares with other clients, making their writes fail.
+                Conn::Pg(_, db::PgRoute::TxPooler) => anyhow::bail!(
+                    "Read-only can't be enforced through a transaction pooler (port 6543). \
+                     Connect through the session pooler (port 5432) or directly instead."
+                ),
+                Conn::Pg(..) => Some("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"),
                 Conn::My(_) => Some("SET SESSION TRANSACTION READ ONLY"),
                 Conn::Lite(_) => None,
             };
@@ -565,7 +571,14 @@ impl AppState {
             }
             _ => {
                 let mut s = pool.session().await?;
+                let tx_pooler = matches!(s.conn, Conn::Pg(_, db::PgRoute::TxPooler));
                 let (begin, end): (&[&'static str], &[&'static str]) = match cfg.kind {
+                    // After ROLLBACK a transaction pooler may run the unlock on a server
+                    // connection another client holds locks on.
+                    DbKind::Postgres if tx_pooler => (
+                        &["BEGIN READ ONLY", "SET LOCAL statement_timeout = '30s'"],
+                        &["ROLLBACK"],
+                    ),
                     // Session-level locks survive ROLLBACK and would ride along on the
                     // pooled connection, so they are released even if the gate missed one.
                     DbKind::Postgres => (
@@ -601,7 +614,7 @@ impl AppState {
                 };
                 let res = tokio::time::timeout(
                     CLAUDE_TIMEOUT + Duration::from_secs(5),
-                    db::run_prepared(&mut s.conn, sql, &[], limits, on_full),
+                    db::run_prepared_in_tx(&mut s.conn, sql, &[], limits, on_full),
                 )
                 .await;
                 if res.is_err()
@@ -609,7 +622,7 @@ impl AppState {
                 {
                     let _ = pool.cancel(b).await;
                 }
-                let mut clean = true;
+                let mut clean = db::close_statements(&mut s.conn).await.is_ok();
                 for stmt in end {
                     if db::exec_raw(&mut s.conn, stmt).await.is_err() {
                         clean = false;

@@ -66,6 +66,8 @@ docker run -d --name tv-mysql -e MYSQL_ROOT_PASSWORD=tvpass -e MYSQL_DATABASE=sh
 
 Without `TV_ITEST=1` the integration tests return early and pass. Remove them with `docker compose -f tests/seed/compose.yml down` (or `docker rm -f tv-pg tv-mysql`).
 
+TableView treats Postgres on port 6543 as a transaction-mode pooler, as Supabase's is (see `PgRoute` in `src-tauri/src/db/mod.rs`). To test that path, put PgBouncer on port 6543 in front of the seeded Postgres with `pool_mode = transaction`, `max_prepared_statements = 0` and `ignore_startup_parameters = extra_float_digits,options`, then run `TV_ITEST_POOLER=127.0.0.1:6543 cargo test postgres_through_a_transaction_pooler`.
+
 The same containers make good manual test data: add a connection to `127.0.0.1:55432`, user `postgres`, password `tvpass`, database `shop`.
 
 ## Pull requests

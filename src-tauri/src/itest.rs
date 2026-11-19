@@ -466,7 +466,7 @@ async fn claude_queries_are_read_only() {
     let pool = st.pool("pg").await.unwrap();
     let mut s = pool.session().await.unwrap();
     db::exec_raw(&mut s.conn, "BEGIN READ ONLY").await.unwrap();
-    let w = db::run_prepared(
+    let w = db::run_prepared_in_tx(
         &mut s.conn,
         "WITH d AS (DELETE FROM orders WHERE id = 1 RETURNING id) SELECT * FROM d",
         &[],
@@ -1256,4 +1256,133 @@ async fn new_search_cancels_the_previous_scan() {
     st.run_editor_query("pg", "s", "DROP TABLE tv_scan", "d")
         .await
         .unwrap();
+}
+
+/// Supabase's port 6543, PgBouncer and other transaction-mode poolers hand each
+/// transaction to whichever server connection is free, so a statement prepared
+/// on one can't be bound on another. Point TV_ITEST_POOLER at such a pooler in
+/// front of the seeded Postgres, listening on port 6543 as Supabase's does (for
+/// example `127.0.0.1:6543`, see CONTRIBUTING.md).
+#[tokio::test]
+async fn postgres_through_a_transaction_pooler() {
+    let Ok(addr) = std::env::var("TV_ITEST_POOLER") else {
+        return;
+    };
+    let (host, port) = addr.rsplit_once(':').expect("TV_ITEST_POOLER is host:port");
+    let st = state();
+    let mut pooled = cfg("pooled", DbKind::Postgres);
+    pooled.host = host.into();
+    pooled.port = port.parse().unwrap();
+    st.connections.lock().unwrap().push(pooled);
+    st.password_override
+        .lock()
+        .unwrap()
+        .insert("pooled".into(), "tvpass".into());
+
+    let opts = BrowseOptions {
+        supersede: None,
+        limit: 50,
+        offset: 0,
+        filters: vec![Filter {
+            column: "status".into(),
+            op: "=".into(),
+            value: "paid".into(),
+        }],
+        order_by: None,
+    };
+    // A filter that fails after the statement is parsed, so it must still be closed.
+    let bad = vec![Filter {
+        column: "total".into(),
+        op: ">".into(),
+        value: "not a number".into(),
+    }];
+    // Many rounds from several tasks at once, so the pooler moves us between
+    // server connections between statements.
+    let mut tasks = vec![];
+    for t in 0..6 {
+        let st = st.clone();
+        let opts = opts.clone();
+        let bad = bad.clone();
+        tasks.push(tokio::spawn(async move {
+            let at = |what: &'static str| move |e: anyhow::Error| e.context(what);
+            for i in 0..25 {
+                let pool = st.pool("pooled").await.map_err(at("connect"))?;
+                pool.schema_tree().await.map_err(at("schema tree"))?;
+                st.structure("pooled", "public", "orders")
+                    .await
+                    .map_err(at("structure"))?;
+                st.browse("pooled", "public", "orders", &opts)
+                    .await
+                    .map_err(at("browse"))?;
+                st.count("pooled", "public", "orders", &opts.filters)
+                    .await
+                    .map_err(at("count"))?;
+                assert!(st.count("pooled", "public", "orders", &bad).await.is_err());
+                st.run_editor_query(
+                    "pooled",
+                    &format!("t{t}"),
+                    "SELECT count(*) FROM customers",
+                    &format!("q{t}-{i}"),
+                )
+                .await
+                .map_err(at("editor"))?;
+                st.run_claude_query(
+                    "pooled",
+                    "SELECT plan, count(*) FROM customers GROUP BY plan",
+                    10,
+                )
+                .await
+                .map_err(at("claude"))?;
+            }
+            anyhow::Ok(())
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap().map_err(|e| format!("{e:#}")).unwrap();
+    }
+    // Edits commit through the pooler, and a conflict rolls back cleanly.
+    st.run_editor_query(
+        "pooled",
+        "setup",
+        "DROP TABLE IF EXISTS tv_pooled; CREATE TABLE tv_pooled (id int PRIMARY KEY, qty int); \
+         INSERT INTO tv_pooled VALUES (1, 1), (2, 2)",
+        "setup",
+    )
+    .await
+    .unwrap();
+    let pool = st.pool("pooled").await.unwrap();
+    let update = |qty: &str, id: &str| edits::Stmt {
+        sql: "UPDATE tv_pooled SET qty = CAST($1 AS int) WHERE id = CAST($2 AS int)".into(),
+        binds: vec![Some(qty.into()), Some(id.into())],
+        expect_one: true,
+    };
+    for round in 0..20 {
+        let n = edits::execute(&pool, &[update(&round.to_string(), "1"), update("7", "2")])
+            .await
+            .unwrap();
+        assert_eq!(n, 2);
+        assert!(edits::execute(&pool, &[update("0", "1"), update("0", "99")]).await.is_err());
+    }
+    let r = st
+        .run_claude_query("pooled", "SELECT qty FROM tv_pooled ORDER BY id", 2)
+        .await
+        .unwrap();
+    let b = r.batch().unwrap();
+    assert_eq!(arrow_text(&b, 0, 0, DbKind::Postgres).as_deref(), Some("19"));
+    st.run_editor_query("pooled", "setup", "DROP TABLE tv_pooled", "drop")
+        .await
+        .unwrap();
+    // Read-only can't be enforced on connections other clients share.
+    st.connections
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c.id == "pooled")
+        .unwrap()
+        .read_only = true;
+    let e = st
+        .run_editor_query("pooled", "ro", "SELECT 1", "ro")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("transaction pooler"), "{e}");
 }

@@ -24,15 +24,46 @@ use columns::{Cell, Collector};
 pub const UI_MAX_ROWS: usize = 10_000_000;
 pub const UI_MAX_BYTES: usize = 1024 * 1024 * 1024;
 
+/// How a Postgres connection reaches the server.
+///
+/// A transaction-mode pooler (Supabase's port 6543, PgBouncer with
+/// `pool_mode = transaction`) runs each transaction on whichever server
+/// connection is free, shared with its other clients. A statement prepared in
+/// one transaction is missing, or belongs to another client, in the next. So
+/// these connections run each bound statement in an explicit transaction to
+/// keep it on one server connection, close its prepared statements before the
+/// transaction ends, and never touch session state (cancel by pid, SET
+/// SESSION, advisory unlocks) that would land on someone else's connection.
+///
+/// Unnamed statements are no way out: sqlx looks up custom column types with a
+/// simple query between parse and bind, which discards the unnamed statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PgRoute {
+    Direct,
+    TxPooler,
+}
+
+impl PgRoute {
+    /// Port 6543 is Supabase's transaction pooler; its session pooler (5432)
+    /// and direct connections keep a server connection per client.
+    pub fn for_port(port: u16) -> Self {
+        if port == 6543 {
+            PgRoute::TxPooler
+        } else {
+            PgRoute::Direct
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum Pool {
-    Pg(PgPool),
+    Pg(PgPool, PgRoute),
     My(MySqlPool),
     Lite { rw: SqlitePool, ro: SqlitePool },
 }
 
 pub enum Conn {
-    Pg(PoolConnection<Postgres>),
+    Pg(PoolConnection<Postgres>, PgRoute),
     My(PoolConnection<MySql>),
     Lite(PoolConnection<Sqlite>),
 }
@@ -161,15 +192,18 @@ pub async fn connect(
             if let Some(p) = password {
                 o = o.password(p);
             }
+            let route = PgRoute::for_port(cfg.port);
             let pool = PgPoolOptions::new()
                 .max_connections(8)
                 .acquire_timeout(timeout)
                 .connect_with(o)
                 .await?;
-            let v: String = sqlx::query_scalar("SELECT current_setting('server_version')")
+            // The simple protocol prepares nothing, so it works through any pooler.
+            let row = sqlx::raw_sql("SELECT current_setting('server_version')")
                 .fetch_one(&pool)
                 .await?;
-            Ok((Pool::Pg(pool), format!("PostgreSQL {v}")))
+            let v: String = sqlx::Row::try_get(&row, 0)?;
+            Ok((Pool::Pg(pool, route), format!("PostgreSQL {v}")))
         }
         DbKind::Mysql => {
             let mut o = MySqlConnectOptions::new()
@@ -234,7 +268,7 @@ impl Conn {
     /// Closes the underlying connection instead of returning it to the pool.
     pub fn discard(self) {
         match self {
-            Conn::Pg(c) => drop(c.detach()),
+            Conn::Pg(c, _) => drop(c.detach()),
             Conn::My(c) => drop(c.detach()),
             Conn::Lite(c) => drop(c.detach()),
         }
@@ -244,7 +278,7 @@ impl Conn {
 impl Pool {
     pub fn kind(&self) -> DbKind {
         match self {
-            Pool::Pg(_) => DbKind::Postgres,
+            Pool::Pg(..) => DbKind::Postgres,
             Pool::My(_) => DbKind::Mysql,
             Pool::Lite { .. } => DbKind::Sqlite,
         }
@@ -252,7 +286,7 @@ impl Pool {
 
     pub async fn close(&self) {
         match self {
-            Pool::Pg(p) => p.close().await,
+            Pool::Pg(p, _) => p.close().await,
             Pool::My(p) => p.close().await,
             Pool::Lite { rw, ro } => {
                 rw.close().await;
@@ -263,13 +297,19 @@ impl Pool {
 
     pub async fn session(&self) -> anyhow::Result<Session> {
         Ok(match self {
-            Pool::Pg(p) => {
+            Pool::Pg(p, PgRoute::TxPooler) => Session {
+                // The pid is of whichever server connection the pooler picked for
+                // that one statement; cancelling it could stop another client's query.
+                conn: Conn::Pg(p.acquire().await?, PgRoute::TxPooler),
+                backend_id: None,
+            },
+            Pool::Pg(p, route) => {
                 let mut c = p.acquire().await?;
                 let id: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
                     .fetch_one(&mut *c)
                     .await?;
                 Session {
-                    conn: Conn::Pg(c),
+                    conn: Conn::Pg(c, *route),
                     backend_id: Some(id as i64),
                 }
             }
@@ -293,12 +333,13 @@ impl Pool {
     /// Ask the server to stop whatever the connection `backend_id` is running.
     pub async fn cancel(&self, backend_id: i64) -> anyhow::Result<bool> {
         match self {
-            Pool::Pg(p) => Ok(
-                sqlx::query_scalar::<_, bool>("SELECT pg_cancel_backend($1)")
-                    .bind(backend_id as i32)
-                    .fetch_one(p)
-                    .await?,
-            ),
+            Pool::Pg(_, PgRoute::TxPooler) => Ok(false),
+            Pool::Pg(p, PgRoute::Direct) => Ok(sqlx::query_scalar::<_, bool>(
+                "SELECT pg_cancel_backend($1)",
+            )
+            .bind(backend_id as i32)
+            .fetch_one(p)
+            .await?),
             Pool::My(p) => {
                 sqlx::raw_sql(AssertSqlSafe(format!("KILL QUERY {backend_id}")))
                     .execute(p)
@@ -437,13 +478,16 @@ fn returns_rows(sql: &str) -> bool {
 }
 
 /// Column names for a statement that returned no rows, so an empty result still shows headers.
-async fn empty_columns(conn: &mut Conn, sql: &str) -> Vec<(String, String)> {
+/// `in_tx` says the connection is inside a transaction, which a transaction
+/// pooler needs to keep the described statement until it is closed.
+async fn empty_columns(conn: &mut Conn, sql: &str, in_tx: bool) -> Vec<(String, String)> {
     if !returns_rows(sql) {
         return vec![];
     }
     let cols = |names: Vec<(String, String)>| names;
     match conn {
-        Conn::Pg(c) => match c
+        Conn::Pg(_, PgRoute::TxPooler) if !in_tx => vec![],
+        Conn::Pg(c, _) => match c
             .prepare(AssertSqlSafe(sql.to_string()).into_sql_str())
             .await
         {
@@ -507,7 +551,7 @@ pub async fn run_script(
 ) -> anyhow::Result<Output> {
     let started = Instant::now();
     let collected = match &mut session.conn {
-        Conn::Pg(c) => drain!(
+        Conn::Pg(c, _) => drain!(
             sqlx::raw_sql(AssertSqlSafe(sql.to_string())).fetch_many(&mut **c),
             PgDecoder,
             limits,
@@ -527,7 +571,7 @@ pub async fn run_script(
         )?,
     };
     let fallback = if collected.0.is_none() && collected.1.is_none() {
-        empty_columns(&mut session.conn, sql).await
+        empty_columns(&mut session.conn, sql, false).await
     } else {
         vec![]
     };
@@ -536,8 +580,56 @@ pub async fn run_script(
 
 /// Runs one prepared statement with text binds. Prepared statements reject
 /// multiple statements on Postgres and MySQL.
-#[allow(deprecated)]
+///
+/// Through a transaction pooler the statement runs in its own transaction, so
+/// the pooler keeps its parse and execute on one server connection. Callers
+/// that already opened a transaction use [`run_prepared_in_tx`].
 pub async fn run_prepared(
+    conn: &mut Conn,
+    sql: &str,
+    binds: &[Option<String>],
+    limits: (usize, usize),
+    on_full: impl FnOnce() + Send,
+) -> anyhow::Result<Output> {
+    if !matches!(conn, Conn::Pg(_, PgRoute::TxPooler)) {
+        return run_prepared_in_tx(conn, sql, binds, limits, on_full).await;
+    }
+    exec_raw(conn, "BEGIN").await?;
+    let res = run_prepared_in_tx(conn, sql, binds, limits, on_full).await;
+    // Unread rows are still on the wire; the caller closes the connection, and
+    // the pooler drops the server connection it left mid-transaction.
+    if res.as_ref().is_ok_and(|o| o.abandoned) {
+        return res;
+    }
+    let closed = close_statements(conn).await;
+    match (&res, closed) {
+        (Ok(_), Ok(())) => exec_raw(conn, "COMMIT").await?,
+        (Ok(_), Err(e)) => {
+            let _ = exec_raw(conn, "ROLLBACK").await;
+            return Err(e);
+        }
+        (Err(_), _) => {
+            let _ = exec_raw(conn, "ROLLBACK").await;
+        }
+    }
+    res
+}
+
+/// Closes the statements sqlx prepared during this transaction, while a
+/// transaction pooler still has the connection on the same server connection.
+/// A no-op for direct connections, which keep them cached.
+pub async fn close_statements(conn: &mut Conn) -> anyhow::Result<()> {
+    if let Conn::Pg(c, PgRoute::TxPooler) = conn {
+        sqlx::Connection::clear_cached_statements(&mut **c).await?;
+    }
+    Ok(())
+}
+
+/// [`run_prepared`] for a connection that is already inside a transaction.
+/// Through a transaction pooler the caller must [`close_statements`] before
+/// the transaction ends.
+#[allow(deprecated)]
+pub async fn run_prepared_in_tx(
     conn: &mut Conn,
     sql: &str,
     binds: &[Option<String>],
@@ -546,7 +638,7 @@ pub async fn run_prepared(
 ) -> anyhow::Result<Output> {
     let started = Instant::now();
     let collected = match conn {
-        Conn::Pg(c) => {
+        Conn::Pg(c, _) => {
             let mut q = sqlx::query::<Postgres>(AssertSqlSafe(sql.to_string()));
             for b in binds {
                 q = q.bind(b.clone());
@@ -569,7 +661,7 @@ pub async fn run_prepared(
         }
     };
     let fallback = if collected.0.is_none() && collected.1.is_none() {
-        empty_columns(conn, sql).await
+        empty_columns(conn, sql, true).await
     } else {
         vec![]
     };
@@ -579,7 +671,7 @@ pub async fn run_prepared(
 /// Runs a fixed control statement (BEGIN, SET, ROLLBACK) over the simple protocol.
 pub async fn exec_raw(conn: &mut Conn, sql: &'static str) -> anyhow::Result<()> {
     match conn {
-        Conn::Pg(c) => {
+        Conn::Pg(c, _) => {
             sqlx::raw_sql(sql).execute(&mut **c).await?;
         }
         Conn::My(c) => {
@@ -595,7 +687,7 @@ pub async fn exec_raw(conn: &mut Conn, sql: &'static str) -> anyhow::Result<()> 
 impl Pool {
     pub async fn conn(&self) -> anyhow::Result<Conn> {
         Ok(match self {
-            Pool::Pg(p) => Conn::Pg(p.acquire().await?),
+            Pool::Pg(p, route) => Conn::Pg(p.acquire().await?, *route),
             Pool::My(p) => Conn::My(p.acquire().await?),
             Pool::Lite { rw, .. } => Conn::Lite(rw.acquire().await?),
         })
@@ -603,12 +695,26 @@ impl Pool {
 
     async fn rows(&self, sql: &str, binds: &[&str]) -> anyhow::Result<Vec<Vec<Cell>>> {
         Ok(match self {
-            Pool::Pg(p) => {
+            Pool::Pg(p, PgRoute::Direct) => {
                 let mut q = sqlx::query::<Postgres>(AssertSqlSafe(sql.to_string()));
                 for b in binds {
                     q = q.bind(b.to_string());
                 }
                 q.fetch_all(p).await?.iter().map(decode::pg_row).collect()
+            }
+            Pool::Pg(p, PgRoute::TxPooler) => {
+                // One transaction keeps parse and execute on one server connection.
+                let mut tx = p.begin().await?;
+                let mut q = sqlx::query::<Postgres>(AssertSqlSafe(sql.to_string()));
+                for b in binds {
+                    q = q.bind(b.to_string());
+                }
+                let rows = q.fetch_all(&mut *tx).await;
+                let closed = sqlx::Connection::clear_cached_statements(&mut *tx).await;
+                let rows = rows?;
+                closed?;
+                tx.commit().await?;
+                rows.iter().map(decode::pg_row).collect()
             }
             Pool::My(p) => {
                 let mut q = sqlx::query::<MySql>(AssertSqlSafe(sql.to_string()));
@@ -637,7 +743,7 @@ impl Pool {
 
     pub async fn schema_tree(&self) -> anyhow::Result<SchemaTree> {
         let sql = match self {
-            Pool::Pg(_) => {
+            Pool::Pg(..) => {
                 "SELECT table_schema::text, table_name::text, table_type::text FROM information_schema.tables \
                  WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_schema NOT LIKE 'pg_toast%' \
                  AND table_schema NOT LIKE 'pg_temp%' \
@@ -694,7 +800,7 @@ impl Pool {
             _ => false,
         };
         let (cols_sql, idx_sql) = match self {
-            Pool::Pg(_) => (
+            Pool::Pg(..) => (
                 "SELECT a.attname::text, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
                  pg_get_expr(d.adbin, d.adrelid), COALESCE(a.attnum = ANY(i.indkey), false), \
                  EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'f' AND a.attnum = ANY(k.conkey)) \
@@ -768,7 +874,7 @@ impl Pool {
     pub async fn estimate_rows(&self, schema: &str, table: &str) -> Option<i64> {
         let sql = match self {
             // reltuples is from the last ANALYZE; scaled by the table's current size like the planner does.
-            Pool::Pg(_) => {
+            Pool::Pg(..) => {
                 "SELECT CASE WHEN c.relkind = 'p' THEN (SELECT sum(GREATEST(ch.reltuples, 0))::bigint \
                  FROM pg_inherits i JOIN pg_class ch ON ch.oid = i.inhrelid WHERE i.inhparent = c.oid) \
                  WHEN c.reltuples < 0 THEN NULL \
