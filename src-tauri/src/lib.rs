@@ -4,6 +4,7 @@ mod chat;
 mod config;
 mod db;
 mod edits;
+mod favorites;
 #[cfg(test)]
 mod itest;
 mod mcp;
@@ -354,6 +355,15 @@ fn save_prefs(state: St<'_>, prefs: serde_json::Map<String, serde_json::Value>) 
 }
 
 #[tauri::command]
+async fn list_favorites() -> Vec<favorites::Favorite> {
+    tauri::async_runtime::spawn_blocking(|| {
+        favorites::tableplus_dir().map(|d| favorites::list(&d)).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
 async fn claude_auth_status(state: St<'_>) -> Res<chat::AuthStatus> {
     Ok(chat::auth_status(&state).await)
 }
@@ -524,6 +534,7 @@ pub fn run() {
             claude_login_code,
             get_prefs,
             save_prefs,
+            list_favorites,
             feedback_list,
             feedback_readiness,
             feedback_fork,

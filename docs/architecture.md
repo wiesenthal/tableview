@@ -22,6 +22,7 @@ src-tauri/src/
   db/columns.rs          cells to Arrow record batches, with row and byte caps
   db/guard.rs            read-only SQL gate for Claude
   edits.rs               grid edits to parameterized SQL
+  favorites.rs           reads TablePlus saved queries (.sql files) for the sidebar
   results.rs             ResultStore (Arrow IPC bytes, evicted by size)
   mcp.rs                 MCP server for Claude
   chat.rs                the in-app Claude panel (runs the `claude` CLI)
@@ -117,7 +118,7 @@ Read-only enforcement, in layers:
 
 - Overlay title bar with the traffic lights over a vibrancy sidebar.
 - Welcome screen: saved connections with search, right-click Connect / Edit / Delete, and the connection form (Test, Save, Connect).
-- Sidebar: connection badge in the env color, table search, schema tree.
+- Sidebar: connection badge in the env color, table search, schema tree, and a Favorites section listing TablePlus saved queries from `~/Library/Application Support/com.tinyapp.TablePlus/Data/Favorite` (folders of `.sql` files; click opens one in a SQL tab).
 - Tabs, which can be pinned (pinned tabs reopen on connect) and renamed.
   - Table tab: Data and Structure views, filters (⌘F), sorting, paging, inline edits with pending-change highlight, review and commit (⌘S).
   - SQL tab: editor (⌘↵ runs the statement under the cursor, ⇧⌘↵ runs all), result grid, chart builder.
